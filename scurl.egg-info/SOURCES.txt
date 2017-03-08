@@ -1,0 +1,7 @@
+main.py
+setup.py
+scurl.egg-info/PKG-INFO
+scurl.egg-info/SOURCES.txt
+scurl.egg-info/dependency_links.txt
+scurl.egg-info/entry_points.txt
+scurl.egg-info/top_level.txt
