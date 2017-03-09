@@ -31,7 +31,7 @@ def initArgParser(parser):
 
 def validateURLs(urls):
     if urls != []:
-    	for url in range(len(urls))
+    	for url in urls:
     		scheme = urlparse(url).scheme
     		if scheme != 'https':
     			sys.exit("URL doesn't use https protocol")

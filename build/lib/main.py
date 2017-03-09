@@ -11,7 +11,7 @@ def main(args=None):
     initArgParser(parser)
     args = parser.parse_args()
 
-    print(args)
+    validateURLs(args.urls)
 
     context = SSL.Context(versions[args.version])
 
@@ -27,4 +27,12 @@ def initArgParser(parser):
     parser.add_argument('--allow-stale-certs', action = 'store', dest = 'exp_days')
     parser.add_argument('--pinnedcertificate', action = 'store', dest = 'cert_file')
 
-    parser.add_argument('url', nargs = '*')
+    parser.add_argument('urls', nargs = '*')
+
+def validateURLs(urls):
+    if urls != []:
+    	for url in urls:
+    		scheme = urlparse(url).scheme
+    		if scheme != 'https':
+    			sys.exit("URL doesn't use https protocol")
+    			
