@@ -22,8 +22,12 @@ def main(args = None):
     	for url in args.urls:
     		#print urlparse(url)
     		conn = makeConnection(urlparse(url))
+    		
     		if isValidCertificate(conn):
     			request(conn)
+
+    		conn.shutdown()
+    		conn.close()
 
 #parses the arguments to scurl
 def initArgParser(parser):
@@ -138,7 +142,7 @@ def callback(conn, cert, errno, depth, result):
 		return result
 	return True
 
-def isPinnedCert(cert):
+def equalsPinnedCert(cert):
 	pinned_hash = scurl_args['pinned_cert'].digest("sha256")
 	cert_hash = cert.digest("sha256")
 	return (pinned_hash == cert_hash)
@@ -157,12 +161,10 @@ def isValidCertificate(conn):
 	cert = conn.get_peer_certificate()
 
 	if scurl_args['pinned_cert'] is not None:
-		if not isPinnedCert(cert):
+		if not equalsPinnedCert(cert):
 			sys.exit('server certificate does not match pinned certificate!')
 
 	return True
 
 def request(conn):
-	sys.stdout.write(conn.recv(1024))
-	conn.shutdown()
-	conn.close()
+	print conn.recv(1024)	
