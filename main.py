@@ -19,11 +19,11 @@ def main(args = None):
     if validateURLs(args.urls):
     	global scurl_args
     	scurl_args = setArguments(args)
-    	for url in args.urls:
-    		#print urlparse(url)
-    		conn = makeConnection(urlparse(url))
+    	for url_string in args.urls:
+    		url = urlparse(url_string)
+    		conn = makeConnection(url)
     		
-    		if isValidCertificate(conn):
+    		if verifySANS(conn, url.hostname):
     			request(conn)
 
     		conn.shutdown()
@@ -46,15 +46,14 @@ def initArgParser(parser):
 
 #checks for https scheme in every url
 def validateURLs(urls):
-    if urls is not []:
-    	for url in urls:
-    		try:
-    			scheme = urlparse(url).scheme
-    			if scheme != 'https':
-    				sys.exit(url+" doesn't use https protocol!")
-    		except Exception:
-    			sys.exit("Couldn't resolve host "+url)
-    	return True;
+    for url in urls:
+	try:
+    		scheme = urlparse(url).scheme
+    		if scheme != 'https':
+    			sys.exit(url+" doesn't use https protocol!")
+    	except Exception:
+    		sys.exit("Couldn't resolve host "+url)
+    return True;
 
 #sets all optional arguments for scurl
 def setArguments(args):
@@ -128,20 +127,20 @@ def makeConnection(url):
 		tls_conn.do_handshake()
 	except Exception:
 		sys.exit("could not execute handshake")
-
 	return tls_conn
 
 def callback(conn, cert, errno, depth, result):
 	if scurl_args['pinned_cert'] is None:
 		if errno is 10:
-			print "really?"
 			return isNotStaleEnough(cert)
 		elif errno is not 0:
-			print "is this what's happening"
-			print errno
 			return False
 		return result
-	return True
+	else:
+		if depth == 0:
+			return equalsPinnedCert(cert)
+		else:
+			return True
 
 def equalsPinnedCert(cert):
 	pinned_hash = scurl_args['pinned_cert'].digest("sha256")
@@ -153,19 +152,39 @@ def isNotStaleEnough(cert):
 		return False
 	n = scurl_args['stale_days']
 	#add functionality for other date formats
-	expire_date = datetime.strptime(cert.get_notAfter(), '%Y%m%d%H%M%S%Z')
+	expire_date = datetime.strptime(cert.get_notAfter(), '%Y%m%d%H%M%S%z')
 	stale_time = datetime.now()-expire_date
 
 	return (0 <= stale_time.days <= n)
 
-def isValidCertificate(conn):
+def regexMatch(host, regex):
+	if regex[0] == '*':
+		return regex[1:] == host[host.find('.')]
+	return host == regex
+
+def verifySANS(conn, host):
 	cert = conn.get_peer_certificate()
+	san_list = getAlternativeNames(cert)
 
-	if scurl_args['pinned_cert'] is not None:
-		if not equalsPinnedCert(cert):
-			sys.exit('server certificate does not match pinned certificate!')
+	for san in san_list:
+		if regexMatch(host, san):
+			return True
 
-	return True
+	commonName = cert.get_subject().commonName
+	return regexMatch(host, commonName)
+
+def getAlternativeNames(cert):
+	san_list = []
+	for i in range(cert.get_extension_count()):
+		if cert.get_extension(i).get_short_name() == "subjectAltName":
+			san_extension = cert.get_extension(i)
+			san_str = san_extension.__str__()
+			
+			san_list = san_str.split(", ")
+			for i in range(len(san_list)):
+				parsed_alt_name = san_list[i].split(":")[1]
+				san_list[i] = parsed_alt_name
+	return san_list
 
 def request(conn):
-	print conn.recv(1024)	
+	pass

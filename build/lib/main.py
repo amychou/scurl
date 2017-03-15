@@ -124,20 +124,17 @@ def makeConnection(url):
 	tls_conn.set_tlsext_host_name(url.hostname)
 	tls_conn.set_connect_state()
 
-	#try:
-	tls_conn.do_handshake()
-	#except Exception:
-	#	sys.exit("could not execute handshake")
-
+	try:
+		tls_conn.do_handshake()
+	except Exception:
+		sys.exit("could not execute handshake")
 	return tls_conn
 
 def callback(conn, cert, errno, depth, result):
 	if scurl_args['pinned_cert'] is None:
 		if errno is 10:
-			print "really?"
 			return isNotStaleEnough(cert)
 		elif errno is not 0:
-			print errno
 			return False
 		return result
 	return True
