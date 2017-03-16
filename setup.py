@@ -7,6 +7,6 @@ setup(
     py_modules=['main'],
     entry_points='''
         [console_scripts]
-        scurl=main:main
+        scurl=scurl:main
     '''
 )

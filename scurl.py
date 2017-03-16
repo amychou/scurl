@@ -1,6 +1,9 @@
+#!/usr/bin/env python2.7
+
 import sys
 import argparse
 import math
+import time
 from OpenSSL import SSL
 from OpenSSL import crypto
 from urlparse import urlparse
@@ -16,15 +19,24 @@ def main(args = None):
     initArgParser(parser)
     args = parser.parse_args()
 
+    if len(args.urls) == 0:
+    	sys.exit("too few arguments")
+
     if validateURLs(args.urls):
     	global scurl_args
     	scurl_args = setArguments(args)
     	for url_string in args.urls:
-    		url = urlparse(url_string)
+    		try:
+    			url = urlparse(url_string)
+    		except Exception:
+    			sys.exit("invalid URL "+url)
     		conn = makeConnection(url)
     		
     		if verifySANS(conn, url.hostname):
-    			request(conn)
+    			request(conn, url)
+    			get_webpage(conn)
+    		else:
+    			sys.exit("invalid certificate received!")
 
     		conn.shutdown()
     		conn.close()
@@ -39,10 +51,10 @@ def initArgParser(parser):
     parser.add_argument('--ciphers', action = 'store', dest = 'ciphers')
     parser.add_argument('--crlfile', action = 'store', dest = 'crlfile')
     parser.add_argument('--cacert', action = 'store', dest = 'cacert')
-    parser.add_argument('--allow-stale-certs', action = 'store', dest = 'exp_days', type = int)
+    parser.add_argument('--allow-stale-certs', action = 'store', dest = 'exp_days')
     parser.add_argument('--pinnedcertificate', action = 'store', dest = 'pinned_cert')
 
-    parser.add_argument('urls', nargs = '+')
+    parser.add_argument('urls', nargs = '*')
 
 #checks for https scheme in every url
 def validateURLs(urls):
@@ -57,7 +69,7 @@ def validateURLs(urls):
 
 #sets all optional arguments for scurl
 def setArguments(args):
-	scurl_args = {'context': None, 'stale_days': None, 'pinned_cert': None}
+	scurl_args = {'context': None, 'stale_days': None, 'pinned_cert': None, 'revoked_serials': None}
 
 	context = SSL.Context(methods[args.protocol])
 
@@ -69,9 +81,11 @@ def setArguments(args):
 
 	if args.crlfile is not None:
 		try:
-			crl_buffer = args.crlfile.read()
+			crl_buffer = open(args.crlfile).read()
 			crl_object = crypto.load_crl(PEM, crl_buffer)
-			context.get_cert_store().add_crl(crl_object)
+			crl_revoked = crl_object.get_revoked()
+
+			scurl_args['revoked_serials'] = [int(cert.get_serial(), 16) for cert in crl_revoked]
 		except Exception:
 			sys.exit('invalid CRL file!')
 
@@ -91,7 +105,7 @@ def setArguments(args):
 
 	if args.pinned_cert is not None:
 		try:
-			cert_buffer = args.pinned_cert.read()
+			cert_buffer = open(args.pinned_cert).read()
 			scurl_args['pinned_cert'] = crypto.load_certificate(PEM, cert_buffer)
 		except Exception:
 			sys.exit('invalid pinned public key certificate!')
@@ -131,6 +145,9 @@ def makeConnection(url):
 
 def callback(conn, cert, errno, depth, result):
 	if scurl_args['pinned_cert'] is None:
+		if scurl_args['revoked_serials'] is not None:
+			if cert.get_serial_number() in scurl_args['revoked_serials']:
+				return False
 		if errno is 10:
 			return isNotStaleEnough(cert)
 		elif errno is not 0:
@@ -152,20 +169,19 @@ def isNotStaleEnough(cert):
 		return False
 	n = scurl_args['stale_days']
 	#add functionality for other date formats
-	expire_date = datetime.strptime(cert.get_notAfter(), '%Y%m%d%H%M%S%z')
+	expire_date = datetime.strptime(cert.get_notAfter(), '%Y%m%d%H%M%SZ')
 	stale_time = datetime.now()-expire_date
 
 	return (0 <= stale_time.days <= n)
 
 def regexMatch(host, regex):
 	if regex[0] == '*':
-		return regex[1:] == host[host.find('.')]
+		return regex[1:] == host[host.find('.'):]
 	return host == regex
 
 def verifySANS(conn, host):
 	cert = conn.get_peer_certificate()
 	san_list = getAlternativeNames(cert)
-
 	for san in san_list:
 		if regexMatch(host, san):
 			return True
@@ -186,5 +202,48 @@ def getAlternativeNames(cert):
 				san_list[i] = parsed_alt_name
 	return san_list
 
-def request(conn):
-	pass
+def request(conn, url):
+	if url.path is not None:
+		request_line = "GET "+url.path+" HTTP/1.0\r\n"
+	else:
+		request_line = "GET / HTTP/1.0\r\n"
+
+	if url.port is None:
+		port = DEFAULT_HTTPS_PORT
+	else:
+		port = url.port
+
+	host = "Host: "+url.hostname+":"+str(port)+"\r\n"
+	user_agent = "User-Agent: cs255/scurl\r\n"
+	connection = "Connection: close\r\n"
+
+	message = request_line+host+user_agent+connection+"\r\n"
+
+	try:
+		conn.sendall(message)
+	except Exception:
+		sys.exit("couldn't make HTTP request")
+
+
+def get_webpage(conn, timeout = 2):
+	conn.setblocking(False)
+	data = ''
+	start_time  = time.time()
+	while True:
+		if time.time()-start_time > timeout:
+			break
+
+		try:
+			new_data = conn.recv(1024)
+			if new_data:
+				start_time = time.time()
+				data = data+new_data
+			else:
+				time.sleep(0.1)
+		except:
+			pass
+
+	print data[data.find("\r\n\r\n")+4:len(data)-1]
+
+if __name__ == '__main__':
+	main()
