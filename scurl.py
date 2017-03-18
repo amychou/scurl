@@ -4,23 +4,21 @@ import sys
 import argparse
 import math
 import time
+from datetime import datetime, timedelta, tzinfo
 from OpenSSL import SSL
 from OpenSSL import crypto
 from urlparse import urlparse
 from socket import socket
-from datetime import datetime
+from dateutil import parser
 
 methods = {'tlsv1.0': SSL.TLSv1_METHOD, 'tlsv1.1': SSL.TLSv1_1_METHOD, 'tlsv1.2': SSL.TLSv1_2_METHOD, 'sslv3' : SSL.SSLv3_METHOD}
 PEM = crypto.FILETYPE_PEM
 DEFAULT_HTTPS_PORT = 443
 
-def main(args = None):
+def main():
     parser = argparse.ArgumentParser()
     initArgParser(parser)
     args = parser.parse_args()
-
-    if len(args.urls) == 0:
-    	sys.exit("too few arguments")
 
     if validateURLs(args.urls):
     	global scurl_args
@@ -30,6 +28,7 @@ def main(args = None):
     			url = urlparse(url_string)
     		except Exception:
     			sys.exit("invalid URL "+url)
+    		
     		conn = makeConnection(url)
     		
     		if verifySANS(conn, url.hostname):
@@ -58,14 +57,18 @@ def initArgParser(parser):
 
 #checks for https scheme in every url
 def validateURLs(urls):
-    for url in urls:
-	try:
-    		scheme = urlparse(url).scheme
-    		if scheme != 'https':
-    			sys.exit(url+" doesn't use https protocol!")
-    	except Exception:
-    		sys.exit("Couldn't resolve host "+url)
-    return True;
+	if urls == []:
+		sys.exit("no url specified!")
+
+	for url in urls:
+		try:
+			scheme = urlparse(url).scheme
+			if scheme != 'https':
+				sys.exit(url+" doesn't use https protocol!")
+		except Exception:
+			sys.exit("Couldn't resolve host "+url)
+
+	return True
 
 #sets all optional arguments for scurl
 def setArguments(args):
@@ -99,7 +102,7 @@ def setArguments(args):
 
 	if args.exp_days is not None:
 		if args.exp_days < 0:
-			raise argparse.ArgumentTypeError('number of days must be non-negative!')
+			sys.exit('number of days must be non-negative!')
 		else:
 			scurl_args['stale_days'] = args.exp_days
 
@@ -145,12 +148,11 @@ def makeConnection(url):
 
 def callback(conn, cert, errno, depth, result):
 	if scurl_args['pinned_cert'] is None:
-		if scurl_args['revoked_serials'] is not None:
-			if cert.get_serial_number() in scurl_args['revoked_serials']:
-				return False
-		if errno is 10:
+		if isRevoked(cert):
+			return False
+		if errno == 10:
 			return isNotStaleEnough(cert)
-		elif errno is not 0:
+		elif errno != 0:
 			return False
 		return result
 	else:
@@ -159,24 +161,43 @@ def callback(conn, cert, errno, depth, result):
 		else:
 			return True
 
+def isRevoked(cert):
+	if scurl_args['revoked_serials'] is not None:
+		if cert.get_serial_number() in scurl_args['revoked_serials']:
+			return True
+	return False
+
 def equalsPinnedCert(cert):
 	pinned_hash = scurl_args['pinned_cert'].digest("sha256")
 	cert_hash = cert.digest("sha256")
 	return (pinned_hash == cert_hash)
 
 def isNotStaleEnough(cert):
+	ZERO = timedelta(0)
+	class UTC(tzinfo):
+		def utcoffset(self, dt):
+			return ZERO
+		def tzname(self, dt):
+			return "UTC"
+		def dst(self, dt):
+			return ZERO
+	utc = UTC()
+
 	if scurl_args['stale_days'] is None:
 		return False
 	n = scurl_args['stale_days']
-	#add functionality for other date formats
-	expire_date = datetime.strptime(cert.get_notAfter(), '%Y%m%d%H%M%SZ')
-	stale_time = datetime.now()-expire_date
+	expire_date = parser.parse(cert.get_notAfter())
+	time_now = datetime.now(utc)
+	stale_time = time_now-expire_date
 
 	return (0 <= stale_time.days <= n)
 
 def regexMatch(host, regex):
 	if regex[0] == '*':
-		return regex[1:] == host[host.find('.'):]
+		try:
+			return regex[1:] == host[host.find('.'):]
+		except Exception:
+			sys.exit("invalid subject alternative name!")
 	return host == regex
 
 def verifySANS(conn, host):
@@ -245,5 +266,4 @@ def get_webpage(conn, timeout = 2):
 
 	print data[data.find("\r\n\r\n")+4:len(data)-1]
 
-if __name__ == '__main__':
-	main()
+main()
